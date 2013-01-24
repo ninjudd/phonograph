@@ -42,7 +42,7 @@
   (let [limit (+ offset (* (sizeof point-format) count))]
     (slice-byte-buffer byte-buffer offset limit)))
 
-(defn- truncate [time density]
+(defn- trunc [time density]
   (- time (mod time density)))
 
 (defn- archive-offset [{:keys [density count]} base time]
@@ -55,15 +55,15 @@
 
 (defn- get-values [{:keys [offset density count] :as archive} byte-buffer from until]
   (let [byte-buffer (archive-byte-buffer archive byte-buffer)
-        from (truncate from density)
-        until (truncate until density)
+        from (trunc from density)
+        until (trunc until density)
         base (first (decode point-format byte-buffer false))
         num (/ (- until from) density)]
     (if (zero? base)
       (repeat num nil)
       (let [from-offset (archive-offset archive base from)
             until-offset (archive-offset archive base until)]
-        (map (fn [[time value]] ;; remove points not within the range
+        (map (fn [[time value]] ;; nil out points not within the time range
                (when (<= from time until)
                  value))
              (if (< from-offset until-offset)
@@ -83,6 +83,6 @@
           (let [from (max from oldest)
                 until (min now until)
                 archive (select-archive (- now from) (:archives header))
-                density (:density archive)
-                values (get-values archive byte-buffer from until)]
+                values (get-values archive byte-buffer from until)
+                density (:density archive)]
             (keyed [from until density values])))))
