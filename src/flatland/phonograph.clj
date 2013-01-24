@@ -1,4 +1,4 @@
-(ns flatland.phonograph.whisper
+(ns flatland.phonograph
   (:require [gloss.core :refer [compile-frame ordered-map enum repeated sizeof]]
             [gloss.io :refer [decode]]
             [flatland.useful.map :refer [keyed]])
