@@ -20,5 +20,5 @@
 
 (deftest create-test
   (with-temp-file [foo]
-    (let [phono (create foo {:overwrite true} {:count 100 :density 10})]
-      (is (= nil (get-range (assoc phono :now 1000) 900 1000))))))
+    (let [phono (create foo {:overwrite true} {:count 100 :density 10} {:count 100 :density 100})]
+      (is (= nil (get-range (assoc phono :now 1000) 800 1000))))))

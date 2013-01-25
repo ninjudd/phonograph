@@ -1,6 +1,7 @@
 (ns flatland.phonograph
   (:require [gloss.core :refer [compile-frame ordered-map enum repeated sizeof]]
-            [gloss.io :refer [decode encode-to-buffer]]
+            [gloss.core.protocols :refer [write-bytes]]
+            [gloss.io :refer [decode]]
             [flatland.useful.map :refer [keyed update]])
   (:import [java.io File RandomAccessFile]
            [java.nio ByteBuffer]
@@ -19,6 +20,9 @@
 (def point-format
   (compile-frame [:uint32 :float64]))
 
+(def point-size
+  (sizeof point-format))
+
 (def aggregate-fn
   {:average #(double (/ (apply + %) (count %)))
    :sum (partial apply +)
@@ -30,7 +34,7 @@
   (- time (mod time density)))
 
 (defn- offset [{:keys [density count]} base time]
-  (* (sizeof point-format)
+  (* point-size
      (rem (/ (- time base) density) count)))
 
 (defn- retention [{:keys [density count]}]
@@ -46,10 +50,13 @@
   (decode (repeated point-format :prefix :none)
           (slice-buffer buffer position limit)))
 
+(defn- write! [frame buffer offset value]
+  (let [codec (compile-frame frame)]
+    (.position buffer offset)
+    (write-bytes codec buffer value)))
+
 (defn- write-point! [buffer position point]
-  (encode-to-buffer point-format
-                    (slice-buffer buffer position nil)
-                    [point]))
+  (write! point-format buffer position point))
 
 (defn- current-time []
   (quot (System/currentTimeMillis) 1000))
@@ -129,20 +136,25 @@
               (map aggregate)
               (map vector (range from until (:density lower)))))))))
 
-(defn- memmap-file [path]
-  (let [channel (.getChannel (RandomAccessFile. path "rw"))
-        buffer (.map channel FileChannel$MapMode/READ_WRITE 0 (.size channel))
-        close #(.close channel)]
-    (keyed [buffer close])))
+(defn- memmap-file [path & [size]]
+  (let [file (RandomAccessFile. path "rw")]
+    (when size
+      (.setLength file size))
+    (let [channel (.getChannel file)
+          buffer (.map channel FileChannel$MapMode/READ_WRITE 0 (.size channel))
+          close #(.close file)]
+      (keyed [buffer close]))))
+
+(defn- archive-end [{:keys [offset count]}]
+  (+ offset (* count point-size)))
 
 (defn- add-offsets [archives header-size]
-  (let [point-size (sizeof point-format)]
-    (rest
-     (reductions (fn [{:keys [offset count]} archive]
-                   (assoc archive
-                     :offset (+ offset (* count point-size))))
-                 {:offset header-size :count 0}
-                 archives))))
+  (rest
+   (reductions (fn [prev archive]
+                 (assoc archive
+                   :offset (archive-end prev)))
+               {:offset header-size :count 0}
+               archives)))
 
 (defn- validate-archives! [archives]
   (when (empty? archives)
@@ -164,24 +176,23 @@
 
 (defn- add-sliced-buffers [archives buffer]
   (for [{:keys [offset count] :as archive} archives]
-    (let [limit (+ offset (* (sizeof point-format) count))]
+    (let [limit (+ offset (* point-size count))]
       (assoc archive
         :buffer (slice-buffer buffer offset limit)))))
 
 (defn create [path opts & archives]
   (validate-archives! archives)
   (when (or (:overwrite opts) (.create (File. path)))
-    (let [{:keys [buffer close]} (memmap-file path)
-          num-archives (count archives)
+    (let [num-archives (count archives)
           header-size (+ (sizeof header-format)
                          (* num-archives (sizeof archive-format)))
           archives (add-offsets archives header-size)
+          end-offset (archive-end (last archives))
+          {:keys [buffer close]} (memmap-file path end-offset)
           header {:max-retention (retention (last archives))
                   :aggregation (:aggregation opts :sum)
                   :propagation-threshold (:propagation-threshold opts 0.0)}]
-      (encode-to-buffer [header-format (repeated archive-format)]
-                        buffer
-                        [header archives])
+      (write! [header-format (repeated archive-format)] buffer 0 [header archives])
       (-> (merge header (keyed [path close archives]))
           (assoc :aggregate (aggregate-fn (:aggregation header)))
           (update :archives add-sliced-buffers buffer)))))
