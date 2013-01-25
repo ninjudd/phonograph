@@ -121,7 +121,7 @@
   [{:keys [density buffer] :as archive} points]
   (let [base (or (base-time buffer)
                  (trunc density (ffirst points)))]
-    (for [[time value] points]
+    (doseq [[time value] points]
       (let [time (trunc density time)
             offset (offset archive base time)]
         (write-point! buffer offset [time value])))))
