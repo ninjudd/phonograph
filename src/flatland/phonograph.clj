@@ -194,6 +194,11 @@
   ;; Should create a sparse file on Linux and OS X. May need additional logic for other systems.
   (.setLength file size))
 
+(defn init-header [header buffer]
+  (-> header
+      (assoc :aggregate (aggregate-fn (:aggregation header)))
+      (update :archives add-sliced-buffers buffer)))
+
 (defn create [path opts & archives]
   (validate-archives! archives)
   (when (or (:overwrite opts) (.create (File. path)))
@@ -208,18 +213,16 @@
                   :aggregation (:aggregation opts :sum)
                   :propagation-threshold (:propagation-threshold opts 0.0)}]
       (write! [header-format (repeated archive-format)] buffer 0 [header archives])
-      (-> (merge header (keyed [path close archives]))
-          (assoc :aggregate (aggregate-fn (:aggregation header)))
-          (update :archives add-sliced-buffers buffer)))))
+      (init-header (merge header (keyed [path close archives]))
+                   buffer))))
 
 (defn open [path]
   (let [file (RandomAccessFile. path "rw")
         {:keys [buffer close]} (memmap-file file)
         [header archives] (decode [header-format (repeated archive-format)]
                                   buffer false)]
-    (-> (merge header (keyed [path close archives]))
-        (assoc :aggregate (aggregate-fn (:aggregation header)))
-        (update :archives add-sliced-buffers buffer))))
+    (init-header (merge header (keyed [path close archives]))
+                 buffer)))
 
 (defn close [{:keys [close]}]
   (close))
