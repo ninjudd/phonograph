@@ -37,8 +37,11 @@
       (aggregate (remove nil? xs)))
     (throw (IllegalArgumentException. (str "Don't know how to aggregate by " kind)))))
 
-(defn- trunc [density time]
+(defn- floor [density time]
   (- time (mod time density)))
+
+(defn- ceil [density time]
+  (+ (floor density time) density))
 
 (defn- offset [{:keys [density count]} base time]
   (* point-size
@@ -77,8 +80,8 @@
   "Get a range of values from an archive between from and until. The buffer passed in must
   be already sliced to only contain the bytes for this specific archive."
   [{:keys [density buffer] :as archive} from until]
-  (let [from (trunc density from)
-        until (trunc density until)
+  (let [from (floor density from)
+        until (floor density until)
         base (base-time buffer)
         num (/ (- until from) density)]
     (if (zero? base)
@@ -120,9 +123,9 @@
   be already sliced to only contain the bytes for this specific archive."
   [{:keys [density ^ByteBuffer buffer] :as archive} points]
   (let [base (or (base-time buffer)
-                 (trunc density (ffirst points)))]
+                 (floor density (ffirst points)))]
     (doseq [[time value] points]
-      (let [time (trunc density time)
+      (let [time (floor density time)
             offset (offset archive base time)]
         (write-point! buffer offset [time value])))
     (.rewind buffer)))
@@ -138,10 +141,9 @@
     (write-points! archive points)
     ;; propagate to lower resolution archives
     (doseq [[higher lower] (partition 2 1 archives)]
-      (let [from (trunc (:density lower) from)
-            until (+ (trunc (:density lower) from)
-                     (:density lower))]
-        (write-points! archive
+      (let [from (floor (:density lower) from)
+            until (ceil (:density lower) until)]
+        (write-points! lower
                        (->> (get-values higher from until)
                             (partition (/ (:density lower) (:density higher))) ; will divide evenly
                             (map aggregate)
