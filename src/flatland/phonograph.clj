@@ -118,13 +118,14 @@
   "Write points into the given archive. Points need to be already aggregated to match the resolution
   of the archive, as existing points in the archive are overwritten. The buffer passed in must
   be already sliced to only contain the bytes for this specific archive."
-  [{:keys [density buffer] :as archive} points]
+  [{:keys [density ^ByteBuffer buffer] :as archive} points]
   (let [base (or (base-time buffer)
                  (trunc density (ffirst points)))]
     (doseq [[time value] points]
       (let [time (trunc density time)
             offset (offset archive base time)]
-        (write-point! buffer offset [time value])))))
+        (write-point! buffer offset [time value])))
+    (.rewind buffer)))
 
 (defn append! [{:keys [aggregate archives]} & points]
   (let [archive (first archives)
