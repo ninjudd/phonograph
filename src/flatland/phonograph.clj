@@ -24,12 +24,18 @@
 (def point-size
   (sizeof point-format))
 
-(def aggregate-fn
+(def aggregates
   {:average #(double (/ (apply + %) (count %)))
    :sum (partial apply +)
    :min (partial apply min)
    :max (partial apply max)
    :last last})
+
+(defn aggregate-fn [kind]
+  (if-let [aggregate (aggregates kind)]
+    (fn [xs]
+      (aggregate (remove nil? xs)))
+    (throw (IllegalArgumentException. (str "Don't know how to aggregate by " kind)))))
 
 (defn- trunc [density time]
   (- time (mod time density)))
