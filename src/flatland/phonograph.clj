@@ -1,41 +1,23 @@
 (ns flatland.phonograph
   (:require [gloss.core :refer [compile-frame ordered-map enum repeated sizeof]]
-            [gloss.io :refer [decode]]
-            [flatland.useful.map :refer [keyed]])
-  (:import [java.io RandomAccessFile]
+            [gloss.io :refer [decode encode-to-buffer]]
+            [flatland.useful.map :refer [keyed update]])
+  (:import [java.io File RandomAccessFile]
            [java.nio ByteBuffer]
            [java.nio.channels FileChannel$MapMode]))
 
 (def header-format
-  (ordered-map
-   :aggregate (enum :int32 :average :sum :last :max :min)
-   :max-retention :int32
-   :propagation-threshold :float32
-   :archives (repeated (ordered-map :offset :int32
-                                    :density :int32
-                                    :count :int32))))
+  (ordered-map :aggregation (enum :int32 :average :sum :last :max :min)
+               :max-retention :int32
+               :propagation-threshold :float32))
+
+(def archive-format
+  (ordered-map :offset :int32
+               :density :int32
+               :count :int32))
 
 (def point-format
   (compile-frame [:uint32 :float64]))
-
-(defn- slice-buffer [^ByteBuffer buffer position limit]
-  (-> (.duplicate buffer)
-      (.position position)
-      (.limit (or limit (.capacity buffer)))
-      (.slice)))
-
-(defn- slice-buffers [archives buffer]
-  (for [{:keys [offset count] :as archive} archives]
-    (let [limit (+ offset (* (sizeof point-format) count))]
-      (assoc archive
-        :buffer (slice-buffer buffer offset limit)))))
-
-(defn open-file [path]
-  (let [channel (.getChannel (RandomAccessFile. path "rw"))
-        buffer (.map channel FileChannel$MapMode/READ_WRITE 0 (.size channel))
-        header (-> (decode header-format buffer false)
-                   (update :archives slice-buffers buffer))]
-    (keyed [path buffer header])))
 
 (def aggregate-fn
   {:average #(double (/ (apply + %) (count %)))
@@ -43,11 +25,6 @@
    :min (partial apply min)
    :max (partial apply max)
    :last last})
-
-(defn- select-archive [interval archives]
-  (first (filter (fn [{:keys [density count]}]
-                   (<= interval (* density count)))
-                 archives)))
 
 (defn- trunc [density time]
   (- time (mod time density)))
@@ -58,6 +35,12 @@
 
 (defn- retention [{:keys [density count]}]
   (* density count))
+
+(defn- slice-buffer [^ByteBuffer buffer position limit]
+  (-> (.duplicate buffer)
+      (.position position)
+      (.limit (or limit (.capacity buffer)))
+      (.slice)))
 
 (defn- read-points [buffer position limit]
   (decode (repeated point-format :prefix :none)
@@ -94,18 +77,23 @@
                (concat (read-points buffer from-offset nil)
                        (read-points buffer 0 until-offset))))))))
 
-(defn get-range [{:keys [header buffer now]} from until]
+(defn- select-archive [interval archives]
+  (first (filter (fn [{:keys [density count]}]
+                   (<= interval (* density count)))
+                 archives)))
+
+(defn get-range [{:keys [max-retention archives now]} from until]
   (when (< until from)
     (throw (IllegalArgumentException.
             (format "Invalid time interval: from time '%s' is after until time '%s'" from until))))
   (let [now (or now (current-time))
-        oldest (- now (:max-retention header))]
+        oldest (- now max-retention)]
     (if (or (< now from)
             (< until oldest))
       {}
       (let [from (max from oldest)
             until (min now until)
-            archive (select-archive (- now from) (:archives header))
+            archive (select-archive (- now from) archives)
             values (get-values archive from until)
             density (:density archive)]
         (keyed [from until density values])))))
@@ -119,19 +107,89 @@
                  (trunc density (ffirst points)))]
     (for [[time value] points]
       (let [time (trunc density time)
-            offset (archive-offset archive base time)]
+            offset (offset archive base time)]
         (write-point! buffer offset [time value])))))
 
-(defn add-points! [{:keys [header buffer now]} & points]
-  (let [archive (first (:archives header))
-        now (trunc (:density archive) (or now (current-time)))
-        points (filter #(< (- now (retention archive)) % now) points)]
+(defn add-points! [{:keys [aggregate archives]} & points]
+  (let [archive (first archives)
+        [from until] (map (comp (juxt max min) first) points)]
+    (when (< (retention archive) (- until from))
+      (throw (IllegalArgumentException.
+              (format "Cannot write multiple points that don't fit in the highest precision archive: %d-%d"
+                      from until))))
     (write-points! archive points)
     ;; propagate to lower resolution archives
     (doseq [[higher lower] (partition 2 1 archives)]
-      (let [oldest (- now (retention higher))]
+      (let [from (trunc (:density lower) from)
+            until (+ (trunc (:density lower) from)
+                     (:density lower))]
         (write-points!
-         (->> (get-values higher oldest now)
+         (->> (get-values higher from until)
               (partition (/ (:density lower) (:density higher))) ; will divide evenly
-              (map (aggregate-fn (:aggregate header)))
-              (map vector (range oldest now (:density higher)))))))))
+              (map aggregate)
+              (map vector (range from until (:density lower)))))))))
+
+(defn- memmap-file [path]
+  (let [channel (.getChannel (RandomAccessFile. path "rw"))
+        buffer (.map channel FileChannel$MapMode/READ_WRITE 0 (.size channel))
+        close #(.close channel)]
+    (keyed [buffer close])))
+
+(defn- add-offsets [archives header-size]
+  (let [point-size (sizeof point-format)]
+    (rest
+     (reductions (fn [{:keys [offset count]} archive]
+                   (assoc archive
+                     :offset (+ offset (* count point-size))))
+                 {:offset header-size :count 0}
+                 archives))))
+
+(defn- validate-archives! [archives]
+  (when (empty? archives)
+    (throw (IllegalArgumentException. "Database must contain at least one archive")))
+  (doseq [[a b] (partition 2 1 archives)]
+    (when-not (< (:density a) (:density b))
+      (throw (IllegalArgumentException.
+              (format "Archives must be sorted from highest to lowest precision: %d >= %d"
+                      (:density a) (:density b)))))
+    (when-not (= 0 (mod (:density b) (:density a)))
+      (throw (IllegalArgumentException.
+              (format "Higher precision density must divide lower precision density evenly: %d/%d"
+                      (:density b) (:density a)))))
+    (let [points-needed (/ (:density b) (:density a))]
+      (when (< (:count a) points-needed)
+        (throw (IllegalArgumentException.
+                (format "Higher precision archive must have enough points to propagate: %d < %d"
+                        (:count a) points-needed)))))))
+
+(defn- add-sliced-buffers [archives buffer]
+  (for [{:keys [offset count] :as archive} archives]
+    (let [limit (+ offset (* (sizeof point-format) count))]
+      (assoc archive
+        :buffer (slice-buffer buffer offset limit)))))
+
+(defn create [path opts & archives]
+  (validate-archives! archives)
+  (when (or (:overwrite opts) (.create (File. path)))
+    (let [{:keys [buffer close]} (memmap-file path)
+          num-archives (count archives)
+          header-size (+ (sizeof header-format)
+                         (* num-archives (sizeof archive-format)))
+          archives (add-offsets archives header-size)
+          header {:max-retention (retention (last archives))
+                  :aggregation (:aggregation opts :sum)
+                  :propagation-threshold (:propagation-threshold opts 0.0)}]
+      (encode-to-buffer [header-format (repeated archive-format)]
+                        buffer
+                        [header archives])
+      (-> (merge header (keyed [path close archives]))
+          (assoc :aggregate (aggregate-fn (:aggregation header)))
+          (update :archives add-sliced-buffers buffer)))))
+
+(defn open [path]
+  (let [{:keys [buffer close]} (memmap-file path)
+        [header archives] (decode [header-format (repeated archive-format)]
+                                  buffer false)]
+    (-> (merge header (keyed [path close archives]))
+        (assoc :aggregate (aggregate-fn (:aggregation header)))
+        (update :archives add-sliced-buffers buffer))))
