@@ -46,11 +46,12 @@
 
 (deftest append-data
   (with-temp-file [f]
-    (let [phono (create f {:overwrite true} {:count 100 :density 10} {:count 100 :density 100})
-          points (map vector (range 10 1010 10) (range 100))]
-      (apply append! (assoc phono :now 1000) points)
-      (let [range (get-range (assoc phono :now 1000) 800 1000)]
-        (is (= 800  (:from range)))
+    (let [phono (-> (create f {:overwrite true} {:count 100 :density 10} {:count 100 :density 100})
+                    (assoc :now 1000))
+          points (map vector (range 10 1000 10) (range 0.0 100))] ;; can't start at time 0, because that gets interpreted as "no data ever"
+      (apply append! phono points)
+      (let [range (get-range phono 10 1000)]
+        (is (= 10   (:from range)))
         (is (= 1000 (:until range)))
         (is (= 10   (:density range)))
         (is (= (map last points) (:values range)))))))
