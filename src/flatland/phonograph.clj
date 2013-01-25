@@ -5,7 +5,8 @@
             [flatland.useful.map :refer [keyed update]])
   (:import [java.io File RandomAccessFile]
            [java.nio ByteBuffer]
-           [java.nio.channels FileChannel$MapMode]))
+           [java.nio.channels FileChannel$MapMode])
+  (:use flatland.useful.debug))
 
 (def header-format
   (ordered-map :aggregation (enum :int32 :average :sum :last :max :min)
@@ -35,7 +36,7 @@
 
 (defn- offset [{:keys [density count]} base time]
   (* point-size
-     (rem (/ (- time base) density) count)))
+     (mod (/ (- time base) density) count)))
 
 (defn- retention [{:keys [density count]}]
   (* density count))
@@ -43,12 +44,14 @@
 (defn- slice-buffer [^ByteBuffer buffer position limit]
   (-> (.duplicate buffer)
       (.position position)
-      (.limit (or limit (.capacity buffer)))
+      (.limit limit)
       (.slice)))
 
 (defn- read-points [buffer position limit]
-  (decode (repeated point-format :prefix :none)
-          (slice-buffer buffer position limit)))
+  (let [limit (or limit (.capacity buffer))]
+    (when (< position limit)
+      (decode (repeated point-format :prefix :none)
+              (slice-buffer buffer position limit)))))
 
 (defn- write! [frame buffer offset value]
   (let [codec (compile-frame frame)]
@@ -117,9 +120,10 @@
             offset (offset archive base time)]
         (write-point! buffer offset [time value])))))
 
-(defn add-points! [{:keys [aggregate archives]} & points]
+(defn append! [{:keys [aggregate archives]} & points]
   (let [archive (first archives)
-        [from until] (map (comp (juxt max min) first) points)]
+        [from until] (apply (juxt min max) (map first points))]
+    ;; validate points
     (when (< (retention archive) (- until from))
       (throw (IllegalArgumentException.
               (format "Cannot write multiple points that don't fit in the highest precision archive: %d-%d"
@@ -130,31 +134,29 @@
       (let [from (trunc (:density lower) from)
             until (+ (trunc (:density lower) from)
                      (:density lower))]
-        (write-points!
-         (->> (get-values higher from until)
-              (partition (/ (:density lower) (:density higher))) ; will divide evenly
-              (map aggregate)
-              (map vector (range from until (:density lower)))))))))
+        (write-points! archive
+                       (->> (get-values higher from until)
+                            (partition (/ (:density lower) (:density higher))) ; will divide evenly
+                            (map aggregate)
+                            (map vector (range from until (:density lower)))))))))
 
-(defn- memmap-file [path & [size]]
-  (let [file (RandomAccessFile. path "rw")]
-    (when size
-      (.setLength file size))
-    (let [channel (.getChannel file)
-          buffer (.map channel FileChannel$MapMode/READ_WRITE 0 (.size channel))
-          close #(.close file)]
-      (keyed [buffer close]))))
+(defn- memmap-file [^RandomAccessFile file]
+  (let [channel (.getChannel file)
+        buffer (.map channel FileChannel$MapMode/READ_WRITE 0 (.size channel))
+        close #(.close file)]
+    (keyed [buffer close])))
 
 (defn- archive-end [{:keys [offset count]}]
   (+ offset (* count point-size)))
 
 (defn- add-offsets [archives header-size]
-  (rest
-   (reductions (fn [prev archive]
-                 (assoc archive
-                   :offset (archive-end prev)))
-               {:offset header-size :count 0}
-               archives)))
+  (doall
+   (rest
+    (reductions (fn [prev archive]
+                  (assoc archive
+                    :offset (archive-end prev)))
+                {:offset header-size :count 0}
+                archives))))
 
 (defn- validate-archives! [archives]
   (when (empty? archives)
@@ -175,10 +177,15 @@
                         (:count a) points-needed)))))))
 
 (defn- add-sliced-buffers [archives buffer]
-  (for [{:keys [offset count] :as archive} archives]
-    (let [limit (+ offset (* point-size count))]
-      (assoc archive
-        :buffer (slice-buffer buffer offset limit)))))
+  (doall
+   (for [{:keys [offset count] :as archive} archives]
+     (let [limit (+ offset (* point-size count))]
+       (assoc archive
+         :buffer (slice-buffer buffer offset limit))))))
+
+(defn grow-file [^RandomAccessFile file size]
+  ;; Should create a sparse file on Linux and OS X. May need additional logic for other systems.
+  (.setLength file size))
 
 (defn create [path opts & archives]
   (validate-archives! archives)
@@ -187,8 +194,9 @@
           header-size (+ (sizeof header-format)
                          (* num-archives (sizeof archive-format)))
           archives (add-offsets archives header-size)
-          end-offset (archive-end (last archives))
-          {:keys [buffer close]} (memmap-file path end-offset)
+          file (doto (RandomAccessFile. path "rw")
+                 (grow-file (archive-end (last archives))))
+          {:keys [buffer close]} (memmap-file file)
           header {:max-retention (retention (last archives))
                   :aggregation (:aggregation opts :sum)
                   :propagation-threshold (:propagation-threshold opts 0.0)}]
@@ -198,9 +206,13 @@
           (update :archives add-sliced-buffers buffer)))))
 
 (defn open [path]
-  (let [{:keys [buffer close]} (memmap-file path)
+  (let [file (RandomAccessFile. path "rw")
+        {:keys [buffer close]} (memmap-file file)
         [header archives] (decode [header-format (repeated archive-format)]
                                   buffer false)]
     (-> (merge header (keyed [path close archives]))
         (assoc :aggregate (aggregate-fn (:aggregation header)))
         (update :archives add-sliced-buffers buffer))))
+
+(defn close [{:keys [close]}]
+  (close))
