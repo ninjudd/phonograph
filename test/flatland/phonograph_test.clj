@@ -21,11 +21,11 @@
 (deftest create-empty-file
   (with-temp-file [f]
     (let [phono (create f {:overwrite true} {:count 100 :density 10} {:count 100 :density 100})
-          range (get-range (assoc phono :now 1000) 800 1000)]
-      (is (= 800  (:from range)))
-      (is (= 1000 (:until range)))
-      (is (= 10   (:density range)))
-      (is (= (repeat 20 nil) (:values range)))
+          r (get-range (assoc phono :now 1000) 800 1000)]
+      (is (= 800  (:from r)))
+      (is (= 1000 (:until r)))
+      (is (= 10   (:density r)))
+      (is (= (repeat 20 nil) (:values r)))
       (let [r (get-range (assoc phono :now 10000) 8000 10000)]
         (is (= 8000  (:from r)))
         (is (= 10000 (:until r)))
@@ -50,7 +50,7 @@
                         {:count 10 :density 1} 
                         {:count 10 :density 10} 
                         {:count 10 :density 100})]
-      (doseq [[from until] (partition 2 1 (range 10 170 10))]
+      (doseq [[from until] (partition 2 1 (range 100 271 10))]
         (let [phono (assoc phono :now until)
               points (map (fn [t] [t (* t 1.0)])
                           (range from until))]
@@ -60,9 +60,15 @@
             (is (= until (:until r)))
             (is (= 1     (:density r)))
             (is (= (map last points) (:values r))))))
-      (let [r (get-range (assoc phono :now 170) 70 170)]
-        (is (= 70  (:from r)))
-        (is (= 170 (:until r)))
+      (let [r (get-range (assoc phono :now 270) 170 270)]
+        (is (= 170 (:from r)))
+        (is (= 270 (:until r)))
         (is (= 10  (:density r)))
-        (is (= (range 745.0 1700.0 100)
+        (is (= (range 1745.0 2700.0 100)
+               (:values r))))
+      (let [r (get-range (assoc phono :now 270) 100 270)]
+        (is (= 100 (:from r)))
+        (is (= 270 (:until r)))
+        (is (= 100 (:density r)))
+        (is (= [(apply + (range 100.0 200.0))]
                (:values r)))))))

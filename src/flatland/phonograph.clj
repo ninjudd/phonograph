@@ -5,8 +5,7 @@
             [flatland.useful.map :refer [keyed update]])
   (:import [java.io File RandomAccessFile]
            [java.nio ByteBuffer]
-           [java.nio.channels FileChannel$MapMode])
-  (:use flatland.useful.debug))
+           [java.nio.channels FileChannel$MapMode]))
 
 (def header-format
   (ordered-map :aggregation (enum :int32 :average :sum :last :max :min)
@@ -62,19 +61,13 @@
       (decode (repeated point-format :prefix :none)
               (slice-buffer buffer position limit)))))
 
-(defn- write! [frame buffer offset value]
-  (let [codec (compile-frame frame)]
-    (.position buffer offset)
-    (write-bytes codec buffer value)))
-
-(defn- write-point! [buffer position point]
-  (write! point-format buffer position point))
-
 (defn- current-time []
   (quot (System/currentTimeMillis) 1000))
 
 (defn- base-time [buffer]
-  (first (decode point-format buffer false)))
+  (let [base (first (decode point-format buffer false))]
+    (when-not (zero? base)
+      base)))
 
 (defn- get-values
   "Get a range of values from an archive between from and until. The buffer passed in must
@@ -84,7 +77,7 @@
         until (floor density until)
         base (base-time buffer)
         num (/ (- until from) density)]
-    (if (zero? base)
+    (if (nil? base)
       (repeat num nil)
       (let [from-offset (offset archive base from)
             until-offset (offset archive base until)]
@@ -117,6 +110,11 @@
             density (:density archive)]
         (keyed [from until density values])))))
 
+(defn- write! [frame buffer offset value]
+  (let [codec (compile-frame frame)]
+    (.position buffer offset)
+    (write-bytes codec buffer value)))
+
 (defn- write-points!
   "Write points into the given archive. Points need to be already aggregated to match the resolution
   of the archive, as existing points in the archive are overwritten. The buffer passed in must
@@ -127,7 +125,10 @@
     (doseq [[time value] points]
       (let [time (floor density time)
             offset (offset archive base time)]
-        (write-point! buffer offset [time value])))
+        (when (zero? time)
+          (throw (IllegalArgumentException.
+                  (format "Cannot write point with time of 0"))))
+        (write! point-format buffer offset [time value])))
     (.rewind buffer)))
 
 (defn append! [{:keys [aggregate archives]} & points]
