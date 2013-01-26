@@ -17,11 +17,8 @@
                :density :int32
                :count :int32))
 
-(def point-format
-  (compile-frame [:uint32 :float64]))
-
-(def point-size
-  (sizeof point-format))
+(def point-format (compile-frame [:uint32 :float64]))
+(def point-size (sizeof point-format))
 
 (def aggregates
   {:average #(double (/ (apply + %) (count %)))
@@ -160,13 +157,11 @@
   (+ offset (* count point-size)))
 
 (defn- add-offsets [archives header-size]
-  (doall
-   (rest
-    (reductions (fn [prev archive]
-                  (assoc archive
-                    :offset (archive-end prev)))
-                {:offset header-size :count 0}
-                archives))))
+  (doall (rest (reductions (fn [prev archive]
+                             (assoc archive
+                               :offset (archive-end prev)))
+                           {:offset header-size :count 0}
+                           archives))))
 
 (defn- validate-archives! [archives]
   (when (empty? archives)
@@ -187,11 +182,10 @@
                         (:count a) points-needed)))))))
 
 (defn- add-sliced-buffers [archives buffer]
-  (doall
-   (for [{:keys [offset count] :as archive} archives]
-     (let [limit (+ offset (* point-size count))]
-       (assoc archive
-         :buffer (slice-buffer buffer offset limit))))))
+  (doall (for [{:keys [offset count] :as archive} archives]
+           (let [limit (+ offset (* point-size count))]
+             (assoc archive
+               :buffer (slice-buffer buffer offset limit))))))
 
 (defn grow-file [^RandomAccessFile file size]
   ;; Should create a sparse file on Linux and OS X. May need additional logic for other systems.
@@ -216,16 +210,14 @@
                   :aggregation (:aggregation opts :sum)
                   :propagation-threshold (:propagation-threshold opts 0.0)}]
       (write! [header-format (repeated archive-format)] buffer 0 [header archives])
-      (init-header (merge header (keyed [path close archives]))
-                   buffer))))
+      (init-header (merge header (keyed [path close archives])) buffer))))
 
 (defn open [path]
   (let [file (RandomAccessFile. path "rw")
         {:keys [buffer close]} (memmap-file file)
         [header archives] (decode [header-format (repeated archive-format)]
                                   buffer false)]
-    (init-header (merge header (keyed [path close archives]))
-                 buffer)))
+    (init-header (merge header (keyed [path close archives])) buffer)))
 
 (defn close [{:keys [close]}]
   (close))
