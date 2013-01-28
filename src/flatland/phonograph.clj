@@ -66,6 +66,13 @@
     (when-not (zero? base)
       base)))
 
+(defn- verify-archive-range [archive from until]
+  (let [retention (retention archive)]
+    (when (< retention (- until from))
+      (throw (IllegalArgumentException.
+              (format "Range %d-%d does not fit into archive with retention %d"
+                      from until retention))))))
+
 (defn- get-values
   "Get a range of values from an archive between from and until. The buffer passed in must
   be already sliced to only contain the bytes for this specific archive."
@@ -74,6 +81,7 @@
         until (floor density until)
         base (base-time buffer)
         num (/ (- until from) density)]
+    (verify-archive-range archive from until)
     (if (nil? base)
       (repeat num nil)
       (let [from-offset (offset archive base from)
@@ -128,24 +136,33 @@
         (write! point-format buffer offset [time value])))
     (.rewind buffer)))
 
-(defn append! [{:keys [aggregate archives]} & points]
+(defn append!
+  "Append the given points to the database. Note that you can only write a batch of points that
+  fit within the highest precision archive."
+  [{:keys [aggregate archives now]} & points]
+  {:pre [(every? #(= 2 (count %)) points)]}
   (let [archive (first archives)
-        [from until] (apply (juxt min max) (map first points))]
-    ;; validate points
-    (when (< (retention archive) (- until from))
-      (throw (IllegalArgumentException.
-              (format "Cannot write multiple points that don't fit in the highest precision archive: %d-%d"
-                      from until))))
+        now (or now (current-time))
+        [from until] (apply (juxt min max)
+                            (cons (dec now) (map first points)))
+        propagations (for [[higher lower] (partition 2 1 archives)]
+                       (let [from (floor (:density lower) from)
+                             until (ceil (:density lower) until)]
+                         (keyed [higher lower from until])))]
+    ;; Verify that the points can fit in the highest resolution archive.
+    (verify-archive-range archive from until)
+    ;; Verify that archives are aligned so we can propagate.
+    (doseq [{:keys [higher from until]} propagations]
+      (verify-archive-range higher from until))
+    ;; Write to the highest resolution archive.
     (write-points! archive points)
-    ;; propagate to lower resolution archives
-    (doseq [[higher lower] (partition 2 1 archives)]
-      (let [from (floor (:density lower) from)
-            until (ceil (:density lower) until)]
-        (write-points! lower
-                       (->> (get-values higher from until)
-                            (partition (/ (:density lower) (:density higher))) ; will divide evenly
-                            (map aggregate)
-                            (map vector (range from until (:density lower)))))))))
+    ;; Propagate to lower resolution archives.
+    (doseq [{:keys [higher lower from until]} propagations]
+      (write-points! lower
+                     (->> (get-values higher from until)
+                          (partition (/ (:density lower) (:density higher))) ; will divide evenly
+                          (map aggregate)
+                          (map vector (range from until (:density lower))))))))
 
 (defn- memmap-file [^RandomAccessFile file]
   (let [channel (.getChannel file)
