@@ -99,7 +99,12 @@
                    (<= interval (* density count)))
                  archives)))
 
-(defn get-range [{:keys [max-retention archives now]} from until]
+(defn get-range
+  "Fetch the range between from and until from the database. This will automatically read data from
+  the highest precision archive that can provide all the data. Note that the current time is used in
+  this calculation, so the archive used depends on how far back you are reading from now, not the
+  size of your query range."
+  [{:keys [max-retention archives now]} from until]
   (when (< until from)
     (throw (IllegalArgumentException.
             (format "Invalid time interval: from time '%s' is after until time '%s'" from until))))
@@ -213,7 +218,15 @@
       (assoc :aggregate (aggregate-fn (:aggregation header)))
       (update :archives add-sliced-buffers buffer)))
 
-(defn create [path opts & archives]
+(defn create
+  "Create a new database file with the given configuration.
+   Supported database options are:
+    :aggregation           - name of aggregation method (see aggregates)
+    :propagation-threshold - number of points that must have a value before propagating
+   Supported archive options are:
+    :density - number of seconds per point; a lower number indicates higher precision
+    :count   - total number of points in this archive"
+  [path opts & archives]
   (validate-archives! archives)
   (when (or (:overwrite opts) (.create (File. path)))
     (let [num-archives (count archives)
@@ -229,12 +242,18 @@
       (write! [header-format (repeated archive-format)] buffer 0 [header archives])
       (init-header (merge header (keyed [path close archives])) buffer))))
 
-(defn open [path]
+(defn open
+  "Open an existing database file. This memory-maps the file and reads the header to determine which
+  segments of the file contain each of the archives."
+  [path]
   (let [file (RandomAccessFile. path "rw")
         {:keys [buffer close]} (memmap-file file)
         [header archives] (decode [header-format (repeated archive-format)]
                                   buffer false)]
     (init-header (merge header (keyed [path close archives])) buffer)))
 
-(defn close [{:keys [close]}]
+(defn close
+  "Close the provided database. This is just a convenience function since each database stores
+  a :close key which is a function that closes the underlying file."
+  [{:keys [close]}]
   (close))
