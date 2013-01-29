@@ -62,7 +62,8 @@
   (quot (System/currentTimeMillis) 1000))
 
 (defn- base-time [buffer]
-  (let [base (first (decode point-format buffer false))]
+  (let [buffer (.duplicate buffer)
+        base (first (decode point-format buffer false))]
     (when-not (zero? base)
       base)))
 
@@ -121,7 +122,8 @@
         (keyed [from until density values])))))
 
 (defn- write! [frame buffer offset value]
-  (let [codec (compile-frame frame)]
+  (let [codec (compile-frame frame)
+        buffer (.duplicate buffer)]
     (.position buffer offset)
     (write-bytes codec buffer value)))
 
