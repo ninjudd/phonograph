@@ -229,9 +229,9 @@
    Supported archive options are:
     :density - number of seconds per point; a lower number indicates higher precision
     :count   - total number of points in this archive"
-  [path opts & archives]
+  [^File path opts & archives]
   (validate-archives! archives)
-  (when (or (:overwrite opts) (.create (File. path)))
+  (when (or (.createNewFile path) (:overwrite opts))
     (let [num-archives (count archives)
           header-size (+ (sizeof header-format)
                          (* num-archives (sizeof archive-format)))
