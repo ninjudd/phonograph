@@ -225,6 +225,7 @@
    Supported database options are:
     :aggregation           - name of aggregation method (see aggregates)
     :propagation-threshold - number of points that must have a value before propagating
+    :overwrite             - whether to open an existing database file for writing
    Supported archive options are:
     :density - number of seconds per point; a lower number indicates higher precision
     :count   - total number of points in this archive"
