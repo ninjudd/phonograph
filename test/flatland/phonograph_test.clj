@@ -60,18 +60,21 @@
             (is (= until (:until r)))
             (is (= 1     (:density r)))
             (is (= (map last points) (:values r))))))
-      (let [r (get-range (assoc phono :now 270) 170 270)]
-        (is (= 170 (:from r)))
-        (is (= 270 (:until r)))
-        (is (= 10  (:density r)))
-        (is (= (range 1745.0 2700.0 100)
-               (:values r))))
-      (let [r (get-range (assoc phono :now 270) 100 270)]
-        (is (= 100 (:from r)))
-        (is (= 270 (:until r)))
-        (is (= 100 (:density r)))
-        (is (= [(apply + (range 100.0 200.0))]
-               (:values r)))))))
+      (letfn [(check-data [phono]
+                (let [r (get-range (assoc phono :now 270) 170 270)]
+                  (is (= 170 (:from r)))
+                  (is (= 270 (:until r)))
+                  (is (= 10  (:density r)))
+                  (is (= (range 1745.0 2700.0 100)
+                         (:values r))))
+                (let [r (get-range (assoc phono :now 270) 100 270)]
+                  (is (= 100 (:from r)))
+                  (is (= 270 (:until r)))
+                  (is (= 100 (:density r)))
+                  (is (= [(apply + (range 100.0 200.0))]
+                         (:values r)))))]
+        (check-data phono)
+        (check-data (reopen (close phono)))))))
 
 (deftest misaligned-archives
   (with-temp-file [f]

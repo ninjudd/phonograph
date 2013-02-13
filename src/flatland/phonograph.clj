@@ -248,15 +248,40 @@
 (defn open
   "Open an existing database file. This memory-maps the file and reads the header to determine which
   segments of the file contain each of the archives."
-  [path]
+  [^File path]
   (let [file (RandomAccessFile. path "rw")
         {:keys [buffer close]} (memmap-file file)
         [header archives] (decode [header-format (repeated archive-format)]
                                   buffer false)]
     (init-header (merge header (keyed [path close archives])) buffer)))
 
+(defn reopen
+  "Reopen a database which has been closed. Will be faster than calling open on the database's path,
+  because it reuses the header data rather than parsing it from the file again. As a consequence, if
+  the underlying file has had its header modified since being closed, the behavior of this function
+  is undefined.
+
+  Note that this function does not cause the passed-in handle to become usable again; it returns a
+  new handle which should be used to perform any reads or writes, and must be closed when no longer
+  needed."
+  [database]
+  (let [^File path (:path database)
+        {:keys [buffer close]} (memmap-file (RandomAccessFile. path "rw"))]
+    (-> database
+        (assoc :close close)
+        (update :archives add-sliced-buffers buffer))))
+
 (defn close
-  "Close the provided database. This is just a convenience function since each database stores
-  a :close key which is a function that closes the underlying file."
-  [{:keys [close]}]
-  (close))
+  "Close the provided database, and return a handle that can be used for reopening it. It is
+  strongly recommended that, once you close a database, you do not hang onto its handle, because
+  some pieces of it cannot be closed except via garbage collection (disgusting at this is - see
+  http://docs.oracle.com/javase/6/docs/api/java/nio/MappedByteBuffer.html for reference). Retaining
+  the handle returned by (close) is safe, of course, but if instead you retain the database passed
+  to (close), you may leak OS resources."
+  [database]
+  (do
+    ((:close database))
+    (update database :archives
+            (fn [archives]
+              (doall (for [archive archives]
+                       (dissoc archive :buffer)))))))
