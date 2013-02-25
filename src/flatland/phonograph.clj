@@ -2,7 +2,8 @@
   (:require [gloss.core :refer [compile-frame ordered-map enum repeated sizeof]]
             [gloss.core.protocols :refer [write-bytes]]
             [gloss.io :refer [decode]]
-            [flatland.useful.map :refer [keyed update]])
+            [flatland.useful.map :refer [keyed update]]
+            [flatland.useful.io :refer [mmap-file]])
   (:import [java.io File RandomAccessFile]
            [java.nio ByteBuffer]
            [java.nio.channels FileChannel$MapMode]))
@@ -171,12 +172,6 @@
                           (map aggregate)
                           (map vector (range from until (:density lower))))))))
 
-(defn- memmap-file [^RandomAccessFile file]
-  (let [channel (.getChannel file)
-        buffer (.map channel FileChannel$MapMode/READ_WRITE 0 (.size channel))
-        close #(.close file)]
-    (keyed [buffer close])))
-
 (defn- archive-end [{:keys [offset count]}]
   (+ offset (* count point-size)))
 
@@ -238,7 +233,7 @@
           archives (add-offsets archives header-size)
           file (doto (RandomAccessFile. path "rw")
                  (grow-file (archive-end (last archives))))
-          {:keys [buffer close]} (memmap-file file)
+          {:keys [buffer close]} (mmap-file file)
           header {:max-retention (retention (last archives))
                   :aggregation (:aggregation opts :sum)
                   :propagation-threshold (:propagation-threshold opts 0.0)}]
@@ -250,7 +245,7 @@
   segments of the file contain each of the archives."
   [^File path]
   (let [file (RandomAccessFile. path "rw")
-        {:keys [buffer close]} (memmap-file file)
+        {:keys [buffer close]} (mmap-file file)
         [header archives] (decode [header-format (repeated archive-format)]
                                   buffer false)]
     (init-header (merge header (keyed [path close archives])) buffer)))
@@ -266,7 +261,7 @@
   needed."
   [database]
   (let [^File path (:path database)
-        {:keys [buffer close]} (memmap-file (RandomAccessFile. path "rw"))]
+        {:keys [buffer close]} (mmap-file (RandomAccessFile. path "rw"))]
     (-> database
         (assoc :close close)
         (update :archives add-sliced-buffers buffer))))
