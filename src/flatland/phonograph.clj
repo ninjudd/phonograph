@@ -215,6 +215,11 @@
       (assoc :aggregate (aggregate-fn (:aggregation header)))
       (update :archives add-sliced-buffers buffer)))
 
+(defn header-size [num-archives]
+  (+ (sizeof header-format)
+     (sizeof (compile-frame :int32)) ;; size of (repeated)'s header for num-archives
+     (* num-archives (sizeof archive-format))))
+
 (defn create
   "Create a new database file with the given configuration.
    Supported database options are:
@@ -228,8 +233,7 @@
   (validate-archives! archives)
   (when (or (.createNewFile path) (:overwrite opts))
     (let [num-archives (count archives)
-          header-size (+ (sizeof header-format)
-                         (* num-archives (sizeof archive-format)))
+          header-size (header-size num-archives)
           archives (add-offsets archives header-size)
           file (doto (RandomAccessFile. path "rw")
                  (grow-file (archive-end (last archives))))

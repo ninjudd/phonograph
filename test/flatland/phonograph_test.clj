@@ -42,7 +42,7 @@
         (is (= 0.0   (:propagation-threshold phono)))
         (is (= [100 100] (map :count (:archives phono))))
         (is (= [10 100]  (map :density (:archives phono))))
-        (is (= [36 1236] (map :offset (:archives phono))))))))
+        (is (= [40 1240] (map :offset (:archives phono))))))))
 
 (deftest append-data
   (with-temp-file [f]
