@@ -146,13 +146,14 @@
 
 (defn append!
   "Append the given points to the database. Note that you can only write a batch of points that
-  fit within the highest precision archive. Each point should be a [unix-time, value] pair."
+  fit within the highest precision archive, and you must right points in chronological order.
+  Each point should be a [unix-time, value] pair."
   [{:keys [aggregate archives now]} & points]
   {:pre [(every? #(= 2 (count %)) points)]}
   (let [archive (first archives)
-        now (or now (current-time))
         [from until] (apply (juxt min max)
-                            (cons (dec now) (map first points)))
+                            (concat (when now [now])
+                                    (map first points)))
         propagations (for [[higher lower] (partition 2 1 archives)]
                        (let [from (floor (:density lower) from)
                              until (ceil (:density lower) until)]
