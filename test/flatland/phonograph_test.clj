@@ -30,7 +30,12 @@
         (is (= 8000  (:from r)))
         (is (= 10000 (:until r)))
         (is (= 100   (:density r)))
-        (is (= (repeat 20 nil) (:values r)))))))
+        (is (= (repeat 20 nil) (:values r))))
+      (let [r (get-range (assoc phono :now 10000) 9000 9005)]
+        (is (= 9000 (:from r)))
+        (is (= 9005 (:until r)))
+        (is (= 10   (:density r)))
+        (is (= ()   (:values r)))))))
 
 (deftest create-and-reopen
   (with-temp-file [f]
