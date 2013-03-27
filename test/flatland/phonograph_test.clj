@@ -81,6 +81,18 @@
         (check-data phono)
         (check-data (reopen (close phono)))))))
 
+(deftest below-density
+  (with-temp-file [f]
+    (let [phono (create f {:overwrite true}
+                        {:count 10 :density 10})]
+      (append! phono [10 0])
+      (let [phono (assoc phono :now 100)
+            r (get-range phono 10 15)]
+        (is (= 10 (:from r)))
+        (is (= 20 (:until r)))
+        (is (= 10 (:density r)))
+        (is (= '(100) (:values r)))))))
+
 (deftest misaligned-archives
   (with-temp-file [f]
     (let [phono (create f {:overwrite true}
