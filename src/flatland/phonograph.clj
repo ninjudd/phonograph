@@ -146,7 +146,7 @@
 
 (defn append!
   "Append the given points to the database. Note that you can only write a batch of points that
-  fit within the highest precision archive, and you must right points in chronological order.
+  fit within the highest precision archive, and you must write points in chronological order.
   Each point should be a [unix-time, value] pair."
   [{:keys [aggregate archives now]} & points]
   {:pre [(every? #(= 2 (count %)) points)]}
