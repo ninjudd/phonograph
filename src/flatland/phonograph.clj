@@ -48,12 +48,12 @@
   (* density count))
 
 (defn- slice-buffer [^ByteBuffer buffer position limit]
-  (-> (.duplicate buffer)
-      (.position position)
-      (.limit limit)
-      (.slice)))
+  (let [^ByteBuffer b (-> (.duplicate buffer)
+                          (.position position)
+                          (.limit limit))]
+    (.slice b)))
 
-(defn- read-points [buffer position limit]
+(defn- read-points [^ByteBuffer buffer position limit]
   (let [limit (or limit (.capacity buffer))]
     (when (< position limit)
       (decode (repeated point-format :prefix :none)
@@ -62,7 +62,7 @@
 (defn- current-time []
   (quot (System/currentTimeMillis) 1000))
 
-(defn- base-time [buffer]
+(defn- base-time [^ByteBuffer buffer]
   (let [buffer (.duplicate buffer)
         base (first (decode point-format buffer false))]
     (when-not (zero? base)
@@ -122,7 +122,7 @@
             density (:density archive)]
         (keyed [from until density values])))))
 
-(defn- write! [frame buffer offset value]
+(defn- write! [frame ^ByteBuffer buffer offset value]
   (let [codec (compile-frame frame)
         buffer (.duplicate buffer)]
     (.position buffer offset)
