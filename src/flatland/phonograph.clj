@@ -40,12 +40,16 @@
 (defn- ceil [density time]
   (+ (floor density time) density))
 
-(defn- offset [{:keys [density count]} base time]
+(defn- offset [archive base time]
   (* point-size
-     (mod (/ (- time base) density) count)))
+     (mod (/ (- time base)
+             (:density archive))
+          (:count archive))))
 
-(defn- retention [{:keys [density count]}]
-  (* density count))
+(defn- retention [archive]
+  (when archive
+    (* (:density archive)
+       (:count archive))))
 
 (defn- slice-buffer [^ByteBuffer buffer position limit]
   (let [^ByteBuffer b (-> (.duplicate buffer)
@@ -96,11 +100,6 @@
                (concat (read-points buffer from-offset nil)
                        (read-points buffer 0 until-offset))))))))
 
-(defn- select-archive [interval archives]
-  (first (filter (fn [{:keys [density count]}]
-                   (<= interval (* density count)))
-                 archives)))
-
 (defn get-range
   "Fetch the range between from and until from the database. This will automatically read data from
   the highest precision archive that can provide all the data. Note that the current time is used in
@@ -117,7 +116,32 @@
       {}
       (let [from (max from oldest)
             until (min now until)
-            archive (select-archive (- now from) archives)
+            archive (->> archives
+                         (filter (comp (partial <= (- now from)) retention))
+                         (first))
+            values (get-values archive from until)
+            density (:density archive)]
+        (keyed [from until density values])))))
+
+(defn get-all
+  "Fetch all points between from and until from the database at maximum precision. Unlike get-range,
+  this will read segments of data from different precisions. Note that the current time is used in
+  this calculation, so the archive used depends on how far back you are reading from now, not the
+  size of your query range."
+  [{:keys [max-retention archives now]} from until]
+  (when (< until from)
+    (throw (IllegalArgumentException.
+            (format "Invalid time interval: from time '%s' is after until time '%s'" from until))))
+  (let [now (or now (current-time))
+        oldest (- now max-retention)
+        from (max from oldest)
+        until (min now until)]
+    (for [[archive after] (->> archives
+                               (drop-while (comp (partial > (- now from))  retention))
+                               (take-while (comp (partial < (- now until)) retention))
+                               (partition 2 1 nil))]
+      (let [retention (or (retention after) 0)
+            until (min (- now retention) until)
             values (get-values archive from until)
             density (:density archive)]
         (keyed [from until density values])))))
