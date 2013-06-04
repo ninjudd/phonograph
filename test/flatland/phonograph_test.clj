@@ -79,7 +79,9 @@
                   (is (= [(apply + (range 100.0 200.0))]
                          (:values r)))))]
         (check-data phono)
-        (check-data (reopen (close phono)))))))
+        (check-data (reopen (close phono))))
+      (is (= nil (get-all (assoc phono :now 270))))
+      (is (= nil (get-all-points (assoc phono :now 270)))))))
 
 (deftest below-density
   (with-temp-file [f]
