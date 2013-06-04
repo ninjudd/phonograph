@@ -148,15 +148,14 @@
   "Fetch a sequence of all points in the database, at the maximum resolution possible without
   losing any data. This will stitch together segments of data from different resolutions."
   [phono]
-  (let [ranges (vec (get-all phono))
-        rev-ranges (rseq ranges)
-        bounds (concat [(:from (peek ranges))]
+  (let [ranges (reverse (get-all phono))
+        bounds (concat [(:from (first ranges))]
                        (map #(ceil (:density %1) (:from %2))
-                            rev-ranges (rest rev-ranges))
-                       [(:until (first ranges))])]
+                            ranges (rest ranges))
+                       [(:until (last ranges))])]
     (mapcat (fn [range from until]
               (subseq (points range) >= from < until))
-            rev-ranges bounds (rest bounds))))
+            ranges bounds (rest bounds))))
 
 (defn- write! [frame ^ByteBuffer buffer offset value]
   (let [codec (compile-frame frame)
