@@ -74,6 +74,10 @@
 
 (defn- verify-archive-range [archive from until]
   (let [retention (retention archive)]
+    (doseq [bound [from until]]
+      (when (neg? bound)
+        (throw (IllegalArgumentException.
+                (format "Negative value %d not permitted for range bound" bound)))))
     (when (< retention (- until from))
       (throw (IllegalArgumentException.
               (format "Range %d-%d does not fit into archive with retention %d"
