@@ -2,6 +2,7 @@
   (:require [gloss.core :refer [compile-frame ordered-map enum repeated sizeof]]
             [gloss.core.protocols :refer [write-bytes]]
             [gloss.io :refer [decode]]
+            [flatland.useful.seq :refer [glue]]
             [flatland.useful.map :refer [keyed update]]
             [flatland.useful.io :refer [mmap-file]])
   (:import [java.io File RandomAccessFile]
@@ -154,7 +155,8 @@
                             ranges (rest ranges))
                        (list (:until (last ranges))))]
     (mapcat (fn [range from until]
-              (subseq (points range) >= from < until))
+              (->> (subseq (points range) >= from < until)
+                   (filter val)))
             ranges bounds (rest bounds))))
 
 (defn- write! [frame ^ByteBuffer buffer offset value]
@@ -168,29 +170,31 @@
   of the archive, as existing points in the archive are overwritten. The buffer passed in must
   be already sliced to only contain the bytes for this specific archive."
   [{:keys [density ^ByteBuffer buffer] :as archive} points]
-  (let [base (or (base-time buffer)
-                 (floor density (ffirst points)))]
-    (doseq [[time value] points]
-      (let [time (floor density time)
-            offset (offset archive base time)]
-        (when (zero? time)
-          (throw (IllegalArgumentException.
-                  (format "Cannot write point with time of 0"))))
-        (write! point-format buffer offset [time value])))
-    (.rewind buffer)))
+  (when (seq points)
+    (let [base (or (base-time buffer)
+                   (floor density (ffirst points)))]
+      (doseq [[time value] points]
+        (let [time (floor density time)
+              offset (offset archive base time)]
+          (when (zero? time)
+            (throw (IllegalArgumentException.
+                    (format "Cannot write point with time of 0"))))
+          (write! point-format buffer offset [time value])))
+      (.rewind buffer))))
 
 (defn append!
-  "Append the given points to the database. Note that you can only write a batch of points that
-  fit within the highest precision archive, and you must write points in chronological order.
-  Each point should be a [unix-time, value] pair."
-  [{:keys [aggregate archives]} & points]
-  {:pre [(every? #(= 2 (count %)) points)]}
+  "Append the given points to the database. Note that you can only write a batch of points that fit
+  within the highest precision archive and will propagate evenly. You must also write points in
+  chronological order. Each point should be a [unix-time, value] pair."
+  [{:keys [aggregate
+  archives]} & points] {:pre [(every? #(= 2 (count %)) points)]}
   (let [archive (first archives)
         [from until] (apply (juxt min max)
                             (map first points))
         propagations (for [[higher lower] (partition 2 1 archives)]
-                       (let [from (floor (:density lower) from)
-                             until (ceil (:density lower) until)]
+                       (let [density (:density lower)
+                             from (floor density from)
+                             until (+ density (floor density until))]
                          (keyed [higher lower from until])))]
     ;; Verify that the points can fit in the highest resolution archive.
     (verify-archive-range archive from until)
@@ -201,11 +205,30 @@
     (write-points! archive points)
     ;; Propagate to lower resolution archives.
     (doseq [{:keys [higher lower from until]} propagations]
-      (write-points! lower
-                     (->> (get-values higher from until)
-                          (partition (/ (:density lower) (:density higher))) ; will divide evenly
-                          (map aggregate)
-                          (map vector (range from until (:density lower))))))))
+      (let [points (get-values higher from until)
+            aggregated (->> points
+                            (partition (/ (:density lower) (:density higher))) ; will divide evenly
+                            (map aggregate)
+                            (map vector (range from until (:density lower))))]
+        (write-points! lower aggregated)))))
+
+(defn migrate!
+  "Migrate points from between phonograph files another using get-all-points. This can be used to
+  change the archive retention structure without losing all your data. Note that some resolution
+  will be lost when points do not completely cover the point they propagate to. Data will also be
+  clustered into spikes based on the retention structure of the old archive."
+  [from to]
+  (let [archives (:archives to)
+        interval (floor (or (:density (second archives)) 1)
+                        (retention (first archives)))
+        batches (->> (get-all-points from)
+                     (glue conj []
+                           (fn [points point]
+                             (< (- (key point)
+                                   (key (first points)))
+                                interval))))]
+    (doseq [points batches]
+      (apply append! to points))))
 
 (defn- archive-end [{:keys [offset count]}]
   (+ offset (* count point-size)))

@@ -79,7 +79,24 @@
                   (is (= [(apply + (range 100.0 200.0))]
                          (:values r)))))]
         (check-data phono)
-        (check-data (reopen (close phono))))
+        (check-data (reopen (close phono)))))))
+
+(deftest migrate
+  (with-temp-file [f]
+    (let [phono (create f {:overwrite true}
+                        {:count 10 :density 1}
+                        {:count 10 :density 10}
+                        {:count 10 :density 100})]
+      (doseq [[from until] (partition 2 1 (range 100 271 10))]
+        (let [phono (assoc phono :now until)
+              points (map (fn [t] [t (* t 1.0)])
+                          (range from until))]
+          (apply append! phono points)
+          (let [r (get-range phono from until)]
+            (is (= from  (:from r)))
+            (is (= until (:until r)))
+            (is (= 1     (:density r)))
+            (is (= (map last points) (:values r))))))
       (is (= [{:from 260, :until 270, :density 1,
                :values '(260.0 261.0 262.0 263.0 264.0 265.0 266.0 267.0 268.0 269.0)}
               {:from 170, :until 270, :density 10,
@@ -90,7 +107,44 @@
       (is (= [[100 14950.0]
               [200 2045.0] [210 2145.0] [220 2245.0] [230 2345.0] [240 2445.0] [250 2545.0] [260 260.0]
               [261 261.0] [262 262.0] [263 263.0] [264 264.0] [265 265.0] [266 266.0] [267 267.0] [268 268.0] [269 269.0]]
-             (get-all-points (assoc phono :now 270)))))))
+             (get-all-points (assoc phono :now 270))))
+      (is (= () (get-all-points phono))) ;; don't return nil points
+      (with-temp-file [g]
+        ;; first test migrating to the exact same retention structure
+        (let [new (create g {:overwrite true}
+                          {:count 10 :density 1}
+                          {:count 10 :density 10}
+                          {:count 10 :density 100})
+              new (assoc new :now 270)
+              phono (assoc phono :now 270)]
+          (migrate! phono new)
+          (is (= {:from 100, :until 270, :density 100,
+                  :values [14950.0]}
+                 (get-range new 100 270)))
+          (is (= {:from 170, :until 270, :density 10,
+                  :values [nil nil nil 2045.0 2145.0 2245.0 2345.0 2445.0 2545.0 2645.0]}
+                 (get-range new 170 270)))
+          (is (= {:from 260, :until 270, :density 1,
+                  :values [260.0 261.0 262.0 263.0 264.0 265.0 266.0 267.0 268.0 269.0]}
+                 (get-range new 260 270)))))
+      (with-temp-file [h]
+        ;; now try a new retention structure
+        (let [new (create h {:overwrite true}
+                          {:count 20 :density 1}
+                          {:count 20 :density 10}
+                          {:count 20 :density 100})
+              new (assoc new :now 270)
+              phono (assoc phono :now 270)]
+          (migrate! phono new)
+          (is (= {:from 100, :until 270, :density 10,
+                  :values [14950.0 nil nil nil nil nil nil nil nil nil 2045.0 2145.0 2245.0 2345.0 2445.0 2545.0 2645.0]}
+                 (get-range new 100 270)))
+          (is (= {:from 170, :until 270, :density 10,
+                  :values [nil nil nil 2045.0 2145.0 2245.0 2345.0 2445.0 2545.0 2645.0]}
+                 (get-range new 170 270)))
+          (is (= {:from 260, :until 270, :density 1,
+                  :values [260.0 261.0 262.0 263.0 264.0 265.0 266.0 267.0 268.0 269.0]}
+                 (get-range new 260 270))))))))
 
 (deftest below-density
   (with-temp-file [f]
