@@ -133,32 +133,30 @@
   [{:keys [archives now]}]
   (let [until (or now (current-time))]
     (for [archive archives]
-      (let [retention (or (retention archive) 0)
-            from (max (- until retention) (:density archive))
-            values (get-values archive from until)
-            density (:density archive)]
+      (let [density (:density archive)
+            from (max density (- until (retention archive)))
+            values (get-values archive from until)]
         (keyed [from until density values])))))
 
 (defn points [{:keys [from until density values]}]
-  (into (sorted-map)
-        (map vector
-             (range from until density)
-             values)))
+  (apply sorted-map
+         (interleave
+          (range from until density)
+          values)))
 
 (defn get-all-points
   "Fetch a sequence of all points in the database, at the maximum resolution possible without
   losing any data. This will stitch together segments of data from different resolutions."
   [phono]
   (let [ranges (reverse (get-all phono))
-        bounds (for [[curr next] (partition 2 1 nil ranges)]
-                 (if next
-                   (ceil (:density curr) (:from next))
-                   (:until curr)))]
+        bounds (concat [(:from (first ranges))]
+                       (for [[curr next] (partition 2 1 ranges)]
+                         (ceil (:density curr) (:from next)))
+                       [(:until (last ranges))])]
     (mapcat (fn [range [from until]]
               (subseq (points range) >= from < until))
             ranges
-            (partition 2 1 (cons (:from (first ranges))
-                              bounds)))))
+            (partition 2 1 bounds))))
 
 (defn- write! [frame ^ByteBuffer buffer offset value]
   (let [codec (compile-frame frame)
