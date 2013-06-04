@@ -128,24 +128,13 @@
         (keyed [from until density values])))))
 
 (defn get-all
-  "Fetch all points between from and until from the database at maximum precision. Unlike get-range,
-  this will read segments of data from different precisions. Note that the current time is used in
-  this calculation, so the archive used depends on how far back you are reading from now, not the
-  size of your query range."
-  [{:keys [max-retention archives now]} from until]
-  (when (< until from)
-    (throw (IllegalArgumentException.
-            (format "Invalid time interval: from time '%s' is after until time '%s'" from until))))
-  (let [now (or now (current-time))
-        oldest (- now max-retention)
-        from (max from oldest)
-        until (min now until)]
-    (for [[archive after] (->> archives
-                               (drop-while (comp (partial > (- now from))  retention))
-                               (take-while (comp (partial < (- now until)) retention))
-                               (partition 2 1 nil))]
-      (let [retention (or (retention after) 0)
-            until (min (- now retention) until)
+  "Fetch all points in database at all precisions. Returns a sequence with each element matching the
+  return format of get-range, one for each archive resolution."
+  [{:keys [archives now]}]
+  (let [until (or now (current-time))]
+    (for [archive archives]
+      (let [retention (or (retention archive) 0)
+            from (max (- until retention) (:density archive))
             values (get-values archive from until)
             density (:density archive)]
         (keyed [from until density values])))))
