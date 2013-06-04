@@ -149,10 +149,10 @@
   losing any data. This will stitch together segments of data from different resolutions."
   [phono]
   (let [ranges (reverse (get-all phono))
-        bounds (concat [(:from (first ranges))]
+        bounds (concat (list (:from (first ranges)))
                        (map #(ceil (:density %1) (:from %2))
                             ranges (rest ranges))
-                       [(:until (last ranges))])]
+                       (list (:until (last ranges))))]
     (mapcat (fn [range from until]
               (subseq (points range) >= from < until))
             ranges bounds (rest bounds))))
