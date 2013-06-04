@@ -80,8 +80,17 @@
                          (:values r)))))]
         (check-data phono)
         (check-data (reopen (close phono))))
-      (is (= nil (get-all (assoc phono :now 270))))
-      (is (= nil (get-all-points (assoc phono :now 270)))))))
+      (is (= [{:from 260, :until 270, :density 1,
+               :values '(260.0 261.0 262.0 263.0 264.0 265.0 266.0 267.0 268.0 269.0)}
+              {:from 170, :until 270, :density 10,
+               :values '(1745.0 1845.0 1945.0 2045.0 2145.0 2245.0 2345.0 2445.0 2545.0 2645.0)}
+              {:from 100, :until 270, :density 100,
+               :values '(14950.0)}]
+             (get-all (assoc phono :now 270))))
+      (is (= [[100 14950.0]
+              [200 2045.0] [210 2145.0] [220 2245.0] [230 2345.0] [240 2445.0] [250 2545.0] [260 260.0]
+              [261 261.0] [262 262.0] [263 263.0] [264 264.0] [265 265.0] [266 266.0] [267 267.0] [268 268.0] [269 269.0]]
+             (get-all-points (assoc phono :now 270)))))))
 
 (deftest below-density
   (with-temp-file [f]
