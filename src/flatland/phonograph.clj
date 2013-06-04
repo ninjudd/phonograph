@@ -38,7 +38,7 @@
   (- time (mod time density)))
 
 (defn- ceil [density time]
-  (+ (floor density time) density))
+  (- time (mod time (- density))))
 
 (defn- offset [archive base time]
   (* point-size
