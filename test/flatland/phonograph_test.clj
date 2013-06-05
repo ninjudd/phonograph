@@ -35,7 +35,7 @@
         (is (= 9000 (:from r)))
         (is (= 9005 (:until r)))
         (is (= 10   (:density r)))
-        (is (= ()   (:values r)))))))
+        (is (empty? (:values r)))))))
 
 (deftest create-and-reopen
   (with-temp-file [f]
@@ -154,9 +154,9 @@
       (let [phono (assoc phono :now 100)
             r (get-range phono 10 15)]
         (is (= 10 (:from r)))
-        (is (= 20 (:until r)))
+        (is (= 15 (:until r)))
         (is (= 10 (:density r)))
-        (is (= '(100) (:values r)))))))
+        (is (empty? (:values r)))))))
 
 (deftest misaligned-archives
   (with-temp-file [f]

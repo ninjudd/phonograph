@@ -93,17 +93,18 @@
         base (base-time buffer)
         num (/ (- until from) density)]
     (verify-archive-range archive from until)
-    (if (nil? base)
-      (repeat num nil)
-      (let [from-offset (offset archive base from)
-            until-offset (offset archive base until)]
-        (map (fn [[time value]] ;; nil out points not within the time range
-               (when (<= from time until)
-                 value))
-             (if (< from-offset until-offset)
-               (read-points buffer from-offset until-offset)
-               (concat (read-points buffer from-offset nil)
-                       (read-points buffer 0 until-offset))))))))
+    (when (< from until)
+      (if (nil? base)
+        (repeat num nil)
+        (let [from-offset (offset archive base from)
+              until-offset (offset archive base until)]
+          (map (fn [[time value]] ;; nil out points not within the time range
+                 (when (<= from time until)
+                   value))
+               (if (< from-offset until-offset)
+                 (read-points buffer from-offset until-offset)
+                 (concat (read-points buffer from-offset nil)
+                         (read-points buffer 0 until-offset)))))))))
 
 (defn get-range
   "Fetch the range between from and until from the database. This will automatically read data from
