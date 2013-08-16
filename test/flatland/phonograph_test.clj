@@ -83,9 +83,11 @@
           (check-data phono)
           (check-data (reopen (close phono))))
         (with-temp-file [f2]
-          (let [phono2 (populate f2)]
+          (let [phono2 (populate f2)
+                values (fn [p] (map :values (get-all (assoc p :now 270))))]
+            (is (not= (values phono) (values phono2)))
             (clear! phono)
-            (is (= (map :values (get-all phono)) (map :values (get-all phono2))))))))))
+            (is (= (values phono) (values phono2)))))))))
 
 (deftest migrate
   (with-temp-file [f]
