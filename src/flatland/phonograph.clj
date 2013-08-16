@@ -2,6 +2,7 @@
   (:require [gloss.core :refer [compile-frame ordered-map enum repeated sizeof]]
             [gloss.core.protocols :refer [write-bytes]]
             [gloss.io :refer [decode]]
+            [flatland.useful.seq :refer [glue]]
             [flatland.useful.map :refer [keyed update]]
             [flatland.useful.io :refer [mmap-file]])
   (:import [java.io File RandomAccessFile]
@@ -38,14 +39,18 @@
   (- time (mod time density)))
 
 (defn- ceil [density time]
-  (+ (floor density time) density))
+  (- time (mod time (- density))))
 
-(defn- offset [{:keys [density count]} base time]
+(defn- offset [archive base time]
   (* point-size
-     (mod (/ (- time base) density) count)))
+     (mod (/ (- time base)
+             (:density archive))
+          (:count archive))))
 
-(defn- retention [{:keys [density count]}]
-  (* density count))
+(defn- retention [archive]
+  (when archive
+    (* (:density archive)
+       (:count archive))))
 
 (defn- slice-buffer [^ByteBuffer buffer position limit]
   (let [^ByteBuffer b (-> (.duplicate buffer)
@@ -70,6 +75,10 @@
 
 (defn- verify-archive-range [archive from until]
   (let [retention (retention archive)]
+    (doseq [bound [from until]]
+      (when (neg? bound)
+        (throw (IllegalArgumentException.
+                (format "Negative value %d not permitted for range bound" bound)))))
     (when (< retention (- until from))
       (throw (IllegalArgumentException.
               (format "Range %d-%d does not fit into archive with retention %d"
@@ -84,22 +93,18 @@
         base (base-time buffer)
         num (/ (- until from) density)]
     (verify-archive-range archive from until)
-    (if (nil? base)
-      (repeat num nil)
-      (let [from-offset (offset archive base from)
-            until-offset (offset archive base until)]
-        (map (fn [[time value]] ;; nil out points not within the time range
-               (when (<= from time until)
-                 value))
-             (if (< from-offset until-offset)
-               (read-points buffer from-offset until-offset)
-               (concat (read-points buffer from-offset nil)
-                       (read-points buffer 0 until-offset))))))))
-
-(defn- select-archive [interval archives]
-  (first (filter (fn [{:keys [density count]}]
-                   (<= interval (* density count)))
-                 archives)))
+    (when (< from until)
+      (if (nil? base)
+        (repeat num nil)
+        (let [from-offset (offset archive base from)
+              until-offset (offset archive base until)]
+          (map (fn [[time value]] ;; nil out points not within the time range
+                 (when (<= from time until)
+                   value))
+               (if (< from-offset until-offset)
+                 (read-points buffer from-offset until-offset)
+                 (concat (read-points buffer from-offset nil)
+                         (read-points buffer 0 until-offset)))))))))
 
 (defn get-range
   "Fetch the range between from and until from the database. This will automatically read data from
@@ -117,10 +122,43 @@
       {}
       (let [from (max from oldest)
             until (min now until)
-            archive (select-archive (- now from) archives)
+            archive (->> archives
+                         (filter (comp (partial <= (- now from)) retention))
+                         (first))
             values (get-values archive from until)
             density (:density archive)]
         (keyed [from until density values])))))
+
+(defn get-all
+  "Fetch all points in database at all precisions. Returns a sequence with each element matching the
+  return format of get-range, one for each archive resolution."
+  [{:keys [archives now]}]
+  (let [until (or now (current-time))]
+    (for [archive archives]
+      (let [density (:density archive)
+            from (max density (- until (retention archive)))
+            values (get-values archive from until)]
+        (keyed [from until density values])))))
+
+(defn points [{:keys [from until density values]}]
+  (apply sorted-map
+         (interleave
+          (range from until density)
+          values)))
+
+(defn get-all-points
+  "Fetch a sequence of all points in the database, at the maximum resolution possible without
+  losing any data. This will stitch together segments of data from different resolutions."
+  [phono]
+  (let [ranges (reverse (get-all phono))
+        bounds (concat (list (:from (first ranges)))
+                       (map #(ceil (:density %1) (:from %2))
+                            ranges (rest ranges))
+                       (list (:until (last ranges))))]
+    (mapcat (fn [range from until]
+              (->> (subseq (points range) >= from < until)
+                   (filter val)))
+            ranges bounds (rest bounds))))
 
 (defn- write! [frame ^ByteBuffer buffer offset value]
   (let [codec (compile-frame frame)
@@ -133,29 +171,31 @@
   of the archive, as existing points in the archive are overwritten. The buffer passed in must
   be already sliced to only contain the bytes for this specific archive."
   [{:keys [density ^ByteBuffer buffer] :as archive} points]
-  (let [base (or (base-time buffer)
-                 (floor density (ffirst points)))]
-    (doseq [[time value] points]
-      (let [time (floor density time)
-            offset (offset archive base time)]
-        (when (zero? time)
-          (throw (IllegalArgumentException.
-                  (format "Cannot write point with time of 0"))))
-        (write! point-format buffer offset [time value])))
-    (.rewind buffer)))
+  (when (seq points)
+    (let [base (or (base-time buffer)
+                   (floor density (ffirst points)))]
+      (doseq [[time value] points]
+        (let [time (floor density time)
+              offset (offset archive base time)]
+          (when (zero? time)
+            (throw (IllegalArgumentException.
+                    (format "Cannot write point with time of 0"))))
+          (write! point-format buffer offset [time value])))
+      (.rewind buffer))))
 
 (defn append!
-  "Append the given points to the database. Note that you can only write a batch of points that
-  fit within the highest precision archive, and you must write points in chronological order.
-  Each point should be a [unix-time, value] pair."
-  [{:keys [aggregate archives]} & points]
-  {:pre [(every? #(= 2 (count %)) points)]}
+  "Append the given points to the database. Note that you can only write a batch of points that fit
+  within the highest precision archive and will propagate evenly. You must also write points in
+  chronological order. Each point should be a [unix-time, value] pair."
+  [{:keys [aggregate
+  archives]} & points] {:pre [(every? #(= 2 (count %)) points)]}
   (let [archive (first archives)
         [from until] (apply (juxt min max)
                             (map first points))
         propagations (for [[higher lower] (partition 2 1 archives)]
-                       (let [from (floor (:density lower) from)
-                             until (ceil (:density lower) until)]
+                       (let [density (:density lower)
+                             from (floor density from)
+                             until (+ density (floor density until))]
                          (keyed [higher lower from until])))]
     ;; Verify that the points can fit in the highest resolution archive.
     (verify-archive-range archive from until)
@@ -166,11 +206,30 @@
     (write-points! archive points)
     ;; Propagate to lower resolution archives.
     (doseq [{:keys [higher lower from until]} propagations]
-      (write-points! lower
-                     (->> (get-values higher from until)
-                          (partition (/ (:density lower) (:density higher))) ; will divide evenly
-                          (map aggregate)
-                          (map vector (range from until (:density lower))))))))
+      (let [points (get-values higher from until)
+            aggregated (->> points
+                            (partition (/ (:density lower) (:density higher))) ; will divide evenly
+                            (map aggregate)
+                            (map vector (range from until (:density lower))))]
+        (write-points! lower aggregated)))))
+
+(defn migrate!
+  "Migrate points from between phonograph files another using get-all-points. This can be used to
+  change the archive retention structure without losing all your data. Note that some resolution
+  will be lost when points do not completely cover the point they propagate to. Data will also be
+  clustered into spikes based on the retention structure of the old archive."
+  [from to]
+  (let [archives (:archives to)
+        interval (floor (or (:density (second archives)) 1)
+                        (retention (first archives)))
+        batches (->> (get-all-points from)
+                     (glue conj []
+                           (fn [points point]
+                             (< (- (key point)
+                                   (key (first points)))
+                                interval))))]
+    (doseq [points batches]
+      (apply append! to points))))
 
 (defn- archive-end [{:keys [offset count]}]
   (+ offset (* count point-size)))
@@ -284,3 +343,12 @@
             (fn [archives]
               (doall (for [archive archives]
                        (dissoc archive :buffer)))))))
+
+(defn clear!
+  "Deletes all data in the database while leaving headers intact, so that the data can be written
+  again from a clean slate."
+  [database]
+  (doseq [{:keys [^ByteBuffer buffer]} (:archives database)]
+    (let [buffer (-> (.duplicate buffer)
+                     (.position 0))]
+      (.put buffer (byte-array (.capacity buffer))))))

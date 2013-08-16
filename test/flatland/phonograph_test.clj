@@ -35,7 +35,7 @@
         (is (= 9000 (:from r)))
         (is (= 9005 (:until r)))
         (is (= 10   (:density r)))
-        (is (= ()   (:values r)))))))
+        (is (empty? (:values r)))))))
 
 (deftest create-and-reopen
   (with-temp-file [f]
@@ -50,6 +50,46 @@
         (is (= [40 1240] (map :offset (:archives phono))))))))
 
 (deftest append-data
+  (letfn [(populate [f]
+            (create f {:overwrite true}
+                    {:count 10 :density 1}
+                    {:count 10 :density 10}
+                    {:count 10 :density 100}))]
+    (with-temp-file [f]
+      (let [phono (populate f)]
+        (doseq [[from until] (partition 2 1 (range 100 271 10))]
+          (let [phono (assoc phono :now until)
+                points (map (fn [t] [t (* t 1.0)])
+                            (range from until))]
+            (apply append! phono points)
+            (let [r (get-range phono from until)]
+              (is (= from  (:from r)))
+              (is (= until (:until r)))
+              (is (= 1     (:density r)))
+              (is (= (map last points) (:values r))))))
+        (letfn [(check-data [phono]
+                  (let [r (get-range (assoc phono :now 270) 170 270)]
+                    (is (= 170 (:from r)))
+                    (is (= 270 (:until r)))
+                    (is (= 10  (:density r)))
+                    (is (= (range 1745.0 2700.0 100)
+                           (:values r))))
+                  (let [r (get-range (assoc phono :now 270) 100 270)]
+                    (is (= 100 (:from r)))
+                    (is (= 270 (:until r)))
+                    (is (= 100 (:density r)))
+                    (is (= [(apply + (range 100.0 200.0))]
+                           (:values r)))))]
+          (check-data phono)
+          (check-data (reopen (close phono))))
+        (with-temp-file [f2]
+          (let [phono2 (populate f2)
+                values (fn [p] (get-all (assoc p :now 270)))]
+            (is (not= (values phono) (values phono2)))
+            (clear! phono)
+            (is (= (values phono) (values phono2)))))))))
+
+(deftest migrate
   (with-temp-file [f]
     (let [phono (create f {:overwrite true}
                         {:count 10 :density 1}
@@ -65,21 +105,54 @@
             (is (= until (:until r)))
             (is (= 1     (:density r)))
             (is (= (map last points) (:values r))))))
-      (letfn [(check-data [phono]
-                (let [r (get-range (assoc phono :now 270) 170 270)]
-                  (is (= 170 (:from r)))
-                  (is (= 270 (:until r)))
-                  (is (= 10  (:density r)))
-                  (is (= (range 1745.0 2700.0 100)
-                         (:values r))))
-                (let [r (get-range (assoc phono :now 270) 100 270)]
-                  (is (= 100 (:from r)))
-                  (is (= 270 (:until r)))
-                  (is (= 100 (:density r)))
-                  (is (= [(apply + (range 100.0 200.0))]
-                         (:values r)))))]
-        (check-data phono)
-        (check-data (reopen (close phono)))))))
+      (is (= [{:from 260, :until 270, :density 1,
+               :values '(260.0 261.0 262.0 263.0 264.0 265.0 266.0 267.0 268.0 269.0)}
+              {:from 170, :until 270, :density 10,
+               :values '(1745.0 1845.0 1945.0 2045.0 2145.0 2245.0 2345.0 2445.0 2545.0 2645.0)}
+              {:from 100, :until 270, :density 100,
+               :values '(14950.0)}]
+             (get-all (assoc phono :now 270))))
+      (is (= [[100 14950.0]
+              [200 2045.0] [210 2145.0] [220 2245.0] [230 2345.0] [240 2445.0] [250 2545.0] [260 260.0]
+              [261 261.0] [262 262.0] [263 263.0] [264 264.0] [265 265.0] [266 266.0] [267 267.0] [268 268.0] [269 269.0]]
+             (get-all-points (assoc phono :now 270))))
+      (is (= () (get-all-points phono))) ;; don't return nil points
+      (with-temp-file [g]
+        ;; first test migrating to the exact same retention structure
+        (let [new (create g {:overwrite true}
+                          {:count 10 :density 1}
+                          {:count 10 :density 10}
+                          {:count 10 :density 100})
+              new (assoc new :now 270)
+              phono (assoc phono :now 270)]
+          (migrate! phono new)
+          (is (= {:from 100, :until 270, :density 100,
+                  :values [14950.0]}
+                 (get-range new 100 270)))
+          (is (= {:from 170, :until 270, :density 10,
+                  :values [nil nil nil 2045.0 2145.0 2245.0 2345.0 2445.0 2545.0 2645.0]}
+                 (get-range new 170 270)))
+          (is (= {:from 260, :until 270, :density 1,
+                  :values [260.0 261.0 262.0 263.0 264.0 265.0 266.0 267.0 268.0 269.0]}
+                 (get-range new 260 270)))))
+      (with-temp-file [h]
+        ;; now try a new retention structure
+        (let [new (create h {:overwrite true}
+                          {:count 20 :density 1}
+                          {:count 20 :density 10}
+                          {:count 20 :density 100})
+              new (assoc new :now 270)
+              phono (assoc phono :now 270)]
+          (migrate! phono new)
+          (is (= {:from 100, :until 270, :density 10,
+                  :values [14950.0 nil nil nil nil nil nil nil nil nil 2045.0 2145.0 2245.0 2345.0 2445.0 2545.0 2645.0]}
+                 (get-range new 100 270)))
+          (is (= {:from 170, :until 270, :density 10,
+                  :values [nil nil nil 2045.0 2145.0 2245.0 2345.0 2445.0 2545.0 2645.0]}
+                 (get-range new 170 270)))
+          (is (= {:from 260, :until 270, :density 1,
+                  :values [260.0 261.0 262.0 263.0 264.0 265.0 266.0 267.0 268.0 269.0]}
+                 (get-range new 260 270))))))))
 
 (deftest below-density
   (with-temp-file [f]
@@ -89,9 +162,9 @@
       (let [phono (assoc phono :now 100)
             r (get-range phono 10 15)]
         (is (= 10 (:from r)))
-        (is (= 20 (:until r)))
+        (is (= 15 (:until r)))
         (is (= 10 (:density r)))
-        (is (= '(100) (:values r)))))))
+        (is (empty? (:values r)))))))
 
 (deftest misaligned-archives
   (with-temp-file [f]
