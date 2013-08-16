@@ -343,3 +343,12 @@
             (fn [archives]
               (doall (for [archive archives]
                        (dissoc archive :buffer)))))))
+
+(defn clear!
+  "Deletes all data in the database while leaving headers intact, so that the data can be written
+  again from a clean slate."
+  [database]
+  (doseq [{:keys [^ByteBuffer buffer]} (:archives database)]
+    (let [buffer (-> (.duplicate buffer)
+                     (.position 0))]
+      (.put buffer (byte-array (.capacity buffer))))))

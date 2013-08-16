@@ -50,36 +50,42 @@
         (is (= [40 1240] (map :offset (:archives phono))))))))
 
 (deftest append-data
-  (with-temp-file [f]
-    (let [phono (create f {:overwrite true}
-                        {:count 10 :density 1}
-                        {:count 10 :density 10}
-                        {:count 10 :density 100})]
-      (doseq [[from until] (partition 2 1 (range 100 271 10))]
-        (let [phono (assoc phono :now until)
-              points (map (fn [t] [t (* t 1.0)])
-                          (range from until))]
-          (apply append! phono points)
-          (let [r (get-range phono from until)]
-            (is (= from  (:from r)))
-            (is (= until (:until r)))
-            (is (= 1     (:density r)))
-            (is (= (map last points) (:values r))))))
-      (letfn [(check-data [phono]
-                (let [r (get-range (assoc phono :now 270) 170 270)]
-                  (is (= 170 (:from r)))
-                  (is (= 270 (:until r)))
-                  (is (= 10  (:density r)))
-                  (is (= (range 1745.0 2700.0 100)
-                         (:values r))))
-                (let [r (get-range (assoc phono :now 270) 100 270)]
-                  (is (= 100 (:from r)))
-                  (is (= 270 (:until r)))
-                  (is (= 100 (:density r)))
-                  (is (= [(apply + (range 100.0 200.0))]
-                         (:values r)))))]
-        (check-data phono)
-        (check-data (reopen (close phono)))))))
+  (letfn [(populate [f]
+            (create f {:overwrite true}
+                    {:count 10 :density 1}
+                    {:count 10 :density 10}
+                    {:count 10 :density 100}))]
+    (with-temp-file [f]
+      (let [phono (populate f)]
+        (doseq [[from until] (partition 2 1 (range 100 271 10))]
+          (let [phono (assoc phono :now until)
+                points (map (fn [t] [t (* t 1.0)])
+                            (range from until))]
+            (apply append! phono points)
+            (let [r (get-range phono from until)]
+              (is (= from  (:from r)))
+              (is (= until (:until r)))
+              (is (= 1     (:density r)))
+              (is (= (map last points) (:values r))))))
+        (letfn [(check-data [phono]
+                  (let [r (get-range (assoc phono :now 270) 170 270)]
+                    (is (= 170 (:from r)))
+                    (is (= 270 (:until r)))
+                    (is (= 10  (:density r)))
+                    (is (= (range 1745.0 2700.0 100)
+                           (:values r))))
+                  (let [r (get-range (assoc phono :now 270) 100 270)]
+                    (is (= 100 (:from r)))
+                    (is (= 270 (:until r)))
+                    (is (= 100 (:density r)))
+                    (is (= [(apply + (range 100.0 200.0))]
+                           (:values r)))))]
+          (check-data phono)
+          (check-data (reopen (close phono))))
+        (with-temp-file [f2]
+          (let [phono2 (populate f2)]
+            (clear! phono)
+            (is (= (map :values (get-all phono)) (map :values (get-all phono2))))))))))
 
 (deftest migrate
   (with-temp-file [f]
