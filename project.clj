@@ -1,4 +1,4 @@
-(defproject org.flatland/phonograph "0.1.4"
+(defproject org.flatland/phonograph "0.1.5"
   :description "A round-robin database based on graphite's whisper."
   :url "http://github.com/flatland/phonograph"
   :license {:name "Eclipse Public License"
