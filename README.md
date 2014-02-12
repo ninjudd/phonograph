@@ -1,13 +1,7 @@
 # phonograph
 
-A Clojure library designed to ... well, that part is up to you.
-
-## Usage
-
-FIXME
+A round-robin database, based on graphite's (whisper)[http://graphite.readthedocs.org/en/1.0/whisper.html].
 
 ## License
-
-Copyright © 2013 FIXME
 
 Distributed under the Eclipse Public License, the same as Clojure.
